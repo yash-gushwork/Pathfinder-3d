@@ -1,0 +1,5 @@
+{
+  "name": "Pathfinder 3D",
+  "description": "A 3D interactive graph visualization tool demonstrating Dijkstra and A* pathfinding algorithms in real-time.",
+  "requestFramePermissions": []
+}
