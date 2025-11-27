@@ -2,9 +2,9 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import GraphVisualizer from './components/GraphVisualizer';
 import Controls from './components/Controls';
 import { generateRandomGraph, runDijkstra, runAStar } from './services/graphUtils';
-import { GraphData, AlgorithmType, VisitedStep } from './types';
+import { GraphData, AlgorithmType, VisitedStep, Node } from './types';
 
-const INITIAL_NODE_COUNT = 200; // Increased density
+const INITIAL_NODE_COUNT = 200;
 
 const App: React.FC = () => {
   const [graphData, setGraphData] = useState<GraphData>({ nodes: [], links: [] });
@@ -17,9 +17,14 @@ const App: React.FC = () => {
   const [pathNodes, setPathNodes] = useState<Set<string>>(new Set());
   const [pathLinks, setPathLinks] = useState<Set<string>>(new Set());
   
-  const [status, setStatus] = useState<'IDLE' | 'RUNNING' | 'FINISHED'>('IDLE');
+  const [status, setStatus] = useState<'IDLE' | 'RUNNING' | 'FINISHED' | 'EXPLODED'>('IDLE');
   const [stats, setStats] = useState<{ cost: number; visitedCount: number } | null>(null);
   const [activeAlgo, setActiveAlgo] = useState<AlgorithmType>('DIJKSTRA');
+
+  const [selectionMode, setSelectionMode] = useState<'START' | 'TARGET' | null>(null);
+  const [activeNodeId, setActiveNodeId] = useState<string | null>(null); // For camera tracking
+  const [activeNodeFromId, setActiveNodeFromId] = useState<string | null>(null); // For camera direction
+  const [explodedNodeId, setExplodedNodeId] = useState<string | null>(null);
 
   const timerRef = useRef<number | null>(null);
 
@@ -38,8 +43,15 @@ const App: React.FC = () => {
       endIdx = Math.floor(Math.random() * newGraph.nodes.length);
     }
 
-    setStartNode(newGraph.nodes[startIdx].id);
-    setEndNode(newGraph.nodes[endIdx].id);
+    const startId = newGraph.nodes[startIdx].id;
+    const endId = newGraph.nodes[endIdx].id;
+
+    // Safety: Start and End cannot be bombs
+    newGraph.nodes[startIdx].isBomb = false;
+    newGraph.nodes[endIdx].isBomb = false;
+
+    setStartNode(startId);
+    setEndNode(endId);
     resetVisualization();
   }, []);
 
@@ -50,6 +62,9 @@ const App: React.FC = () => {
     setPathLinks(new Set());
     setStatus('IDLE');
     setStats(null);
+    setActiveNodeId(null);
+    setActiveNodeFromId(null);
+    setExplodedNodeId(null);
     if (timerRef.current) {
       clearInterval(timerRef.current);
     }
@@ -60,46 +75,87 @@ const App: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const animateAlgorithm = (visitedHistory: VisitedStep[], path: string[], cost: number) => {
+  const handleNodeClick = (node: Node) => {
+    if (status === 'RUNNING') return;
+
+    if (selectionMode === 'START') {
+        // Ensure new start is not a bomb
+        const updatedNodes = graphData.nodes.map(n => 
+            n.id === node.id ? { ...n, isBomb: false } : n
+        );
+        setGraphData({ ...graphData, nodes: updatedNodes });
+        setStartNode(node.id);
+        setSelectionMode(null);
+        resetVisualization();
+    } else if (selectionMode === 'TARGET') {
+        // Ensure new target is not a bomb
+        const updatedNodes = graphData.nodes.map(n => 
+            n.id === node.id ? { ...n, isBomb: false } : n
+        );
+        setGraphData({ ...graphData, nodes: updatedNodes });
+        setEndNode(node.id);
+        setSelectionMode(null);
+        resetVisualization();
+    }
+  };
+
+  const animateAlgorithm = (visitedHistory: VisitedStep[], path: string[], cost: number, explodedAt?: string | null) => {
     setStatus('RUNNING');
     let stepIndex = 0;
     
-    // Slow motion: 40ms per step
+    // Animation Speed (ms) - Slower for smoother camera ride
+    const SPEED = 300;
+
     timerRef.current = window.setInterval(() => {
-      if (stepIndex >= visitedHistory.length) {
-        // Finish animation
-        if (timerRef.current) clearInterval(timerRef.current);
+      // 1. Handle Step
+      if (stepIndex < visitedHistory.length) {
+          const step = visitedHistory[stepIndex];
+          setActiveNodeId(step.id); // Triggers camera travel
+          setActiveNodeFromId(step.from);
+          
+          setVisitedNodes(prev => {
+            const next = new Set(prev);
+            next.add(step.id);
+            return next;
+          });
+
+          if (step.from) {
+            setVisitedLinks(prev => {
+              const next = new Set(prev);
+              next.add(`${step.from}-${step.id}`); 
+              return next;
+            });
+          }
+          stepIndex++;
+          return;
+      }
+
+      // 2. Animation Complete
+      if (timerRef.current) clearInterval(timerRef.current);
+
+      // 3. Check for Explosion
+      if (explodedAt) {
+          setExplodedNodeId(explodedAt);
+          setStatus('EXPLODED');
+          setActiveNodeId(null);
+          setActiveNodeFromId(null);
+          return;
+      }
         
-        const pNodes = new Set(path);
-        const pLinks = new Set<string>();
-        for (let i = 0; i < path.length - 1; i++) {
-          pLinks.add(`${path[i]}-${path[i+1]}`);
-        }
-        setPathNodes(pNodes);
-        setPathLinks(pLinks);
-        setStats({ cost, visitedCount: visitedHistory.length });
-        setStatus('FINISHED');
-        return;
+      // 4. Success - Show Path
+      const pNodes = new Set(path);
+      const pLinks = new Set<string>();
+      for (let i = 0; i < path.length - 1; i++) {
+        pLinks.add(`${path[i]}-${path[i+1]}`);
       }
+      setPathNodes(pNodes);
+      setPathLinks(pLinks);
+      setStats({ cost, visitedCount: visitedHistory.length });
+      setStatus('FINISHED');
+      setActiveNodeId(null); // Stop camera follow
+      setActiveNodeFromId(null);
 
-      const step = visitedHistory[stepIndex];
-      
-      setVisitedNodes(prev => {
-        const next = new Set(prev);
-        next.add(step.id);
-        return next;
-      });
-
-      if (step.from) {
-        setVisitedLinks(prev => {
-          const next = new Set(prev);
-          next.add(`${step.from}-${step.id}`); // Storing one direction is enough if visualizer checks both
-          return next;
-        });
-      }
-
-      stepIndex++;
-    }, 40); 
+    }, SPEED); 
   };
 
   const handleRun = (algo: AlgorithmType) => {
@@ -116,7 +172,7 @@ const App: React.FC = () => {
         result = runAStar(graphData, startNode, endNode);
       }
       
-      animateAlgorithm(result.visitedHistory, result.path, result.cost);
+      animateAlgorithm(result.visitedHistory, result.path, result.cost, result.explodedAt);
     }, 100);
   };
 
@@ -131,6 +187,10 @@ const App: React.FC = () => {
         algorithmStatus={status}
         stats={stats}
         activeAlgo={activeAlgo}
+        selectionMode={selectionMode}
+        setSelectionMode={setSelectionMode}
+        startNodeId={startNode}
+        endNodeId={endNode}
       />
       
       <GraphVisualizer 
@@ -141,6 +201,11 @@ const App: React.FC = () => {
         visitedLinks={visitedLinks}
         pathNodes={pathNodes}
         pathLinks={pathLinks}
+        onNodeClick={handleNodeClick}
+        selectionMode={selectionMode}
+        activeNodeId={activeNodeId}
+        activeNodeFromId={activeNodeFromId}
+        explodedNodeId={explodedNodeId}
       />
     </div>
   );

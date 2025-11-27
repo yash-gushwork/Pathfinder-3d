@@ -13,12 +13,15 @@ export const generateRandomGraph = (nodeCount: number = 200, connectionRadius: n
   const nodes: Node[] = [];
   const links: Link[] = [];
 
-  // 1. Generate random nodes in a 3D space (-60 to 60)
+  // 1. Generate random nodes in a 3D space
   for (let i = 0; i < nodeCount; i++) {
     const x = Math.random() * 120 - 60;
     const y = Math.random() * 120 - 60;
     const z = Math.random() * 120 - 60;
     
+    // 15% chance to be a bomb
+    const isBomb = Math.random() < 0.15;
+
     nodes.push({
       id: `node-${i}`,
       x, 
@@ -28,11 +31,12 @@ export const generateRandomGraph = (nodeCount: number = 200, connectionRadius: n
       fx: x,
       fy: y,
       fz: z,
-      val: 1 
+      val: 1,
+      isBomb
     });
   }
 
-  // 2. Connect nodes that are close to each other to create a spatial graph
+  // 2. Connect nodes that are close to each other
   for (let i = 0; i < nodes.length; i++) {
     for (let j = i + 1; j < nodes.length; j++) {
       const dist = getDistance(nodes[i], nodes[j]);
@@ -78,7 +82,6 @@ const buildAdjacencyList = (graph: GraphData) => {
   });
   
   graph.links.forEach(l => {
-    // ForceGraph3D might parse source/target as objects, handle both string and object
     const sourceId = typeof l.source === 'object' ? (l.source as any).id : l.source;
     const targetId = typeof l.target === 'object' ? (l.target as any).id : l.target;
 
@@ -92,6 +95,9 @@ const buildAdjacencyList = (graph: GraphData) => {
 
 export const runDijkstra = (graph: GraphData, startId: string, endId: string): AlgoResult => {
   const adj = buildAdjacencyList(graph);
+  const nodeMap = new Map<string, Node>();
+  graph.nodes.forEach(n => nodeMap.set(n.id, n));
+
   const distances: Record<string, number> = {};
   const previous: Record<string, string | null> = {};
   const visitedHistory: VisitedStep[] = [];
@@ -116,6 +122,12 @@ export const runDijkstra = (graph: GraphData, startId: string, endId: string): A
     visitedSet.add(u);
 
     visitedHistory.push({ id: u, from: previous[u] });
+
+    // BOMB CHECK
+    const currentNode = nodeMap.get(u);
+    if (currentNode && currentNode.isBomb && u !== startId && u !== endId) {
+      return { path: [], visitedHistory, cost: 0, explodedAt: u };
+    }
 
     if (u === endId) break;
 
@@ -188,6 +200,13 @@ export const runAStar = (graph: GraphData, startId: string, endId: string): Algo
     const current = pq.dequeue();
     if (!current) break;
     const { id: u } = current;
+
+    // BOMB CHECK
+    const currentNode = nodeMap.get(u);
+    if (currentNode && currentNode.isBomb && u !== startId && u !== endId) {
+       visitedHistory.push({ id: u, from: previous[u] });
+       return { path: [], visitedHistory, cost: 0, explodedAt: u };
+    }
 
     if (u === endId) {
         visitedHistory.push({ id: u, from: previous[u] });

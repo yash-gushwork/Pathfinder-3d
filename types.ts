@@ -12,6 +12,7 @@ export interface Node {
   val?: number; // Size
   isStart?: boolean;
   isEnd?: boolean;
+  isBomb?: boolean;
 }
 
 export interface Link {
@@ -36,6 +37,7 @@ export interface AlgoResult {
   path: string[];
   visitedHistory: VisitedStep[];
   cost: number;
+  explodedAt?: string | null;
 }
 
 export type AlgorithmType = 'DIJKSTRA' | 'ASTAR';
